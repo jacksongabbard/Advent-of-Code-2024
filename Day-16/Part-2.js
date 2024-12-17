@@ -1,5 +1,9 @@
 const fs = require('fs');
 
+// Disclaimer (probably just to future me):
+// This code sucks. I should have had the self-discipline to burn it down and
+// start again. I did not. It works though. And it's fast.
+
 function makeMazeFromInput(input) {
   const lines = input.split('\n').filter(Boolean);
   const grid = [];
