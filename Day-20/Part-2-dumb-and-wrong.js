@@ -24,7 +24,7 @@ function makeGrid(input) {
 
 
 
-function print(grid, size, path, start, end) {
+function print(grid, size, path, start = {}, end = {}, cheatNodeMap={}) {
 
   const pathSet = new Set();
   for (let p of path) {
@@ -40,6 +40,8 @@ function print(grid, size, path, start, end) {
         row.push('\x1b[33m' + '█' + '\x1b[0m');
       } else if (end.x === x && end.y === y) {
         row.push('\x1b[34m' + '█' + '\x1b[0m');
+      } else if (cheatNodeMap[x + ',' + y]) {
+        row.push('\x1b[35m' + '█' + '\x1b[0m');
       } else if (!pathSet.has(h(x, y))) {
         row.push(grid[y][x]);
       } else {
@@ -187,46 +189,7 @@ function clone(grid) {
   return out;
 }
 
-function run(file)  {
-  const input = fs.readFileSync(file).toString('utf-8');
-  const grid = makeGrid(input);
-  const size = grid.length;
-  const nodes = nodesFromGrid(grid, size);
-  const { start, end } = startAndEndFromGrid(grid);
-  const path = solve(nodes, size, start, end);
-
-  if (!path) {
-    console.log('no exit, my guy');
-    process.exit(1);
-  }
-
-  const cheats = {};
-  const noCheatPathLength = path.length;
-  print(grid, size, path, start, end);
-
-  for (let y=0; y<size; y++) {
-    xLoop: for (let x=0; x<size; x++) {
-      if (grid[y][x] !== '#') {
-        continue xLoop;
-      }
-      console.log('cheating at ' + x + ' x ' + y);
-      const myGrid = clone(grid);
-      myGrid[y][x] = '.';
-
-      const myNodes = nodesFromGrid(myGrid, size);
-      const path = solve(myNodes, size, start, end);
-
-      if (!path) {
-        console.log('no exit, my guy');
-        process.exit(1);
-      }
-
-      if (path.length < noCheatPathLength) {
-        cheats[h(x,y)] = noCheatPathLength - path.length;
-      }
-    }
-  }
-
+function report(cheats) {
   console.log(cheats);
   const groupedBySize = {};
   let counted = 0;
@@ -245,6 +208,136 @@ function run(file)  {
   console.log({ counted });
 }
 
+const dirs = [
+  { x: 0, y: -1 },
+  { x: 0, y: 1 },
+  { x: -1, y: 0 },
+  { x: 1, y: 0 },
+];
+function findCheatsFromPoint(
+  grid, path, noCheatPathLength, cheats, pathHash, a, cheatPos, stepsToA, xd=0,
+  yd=0, seen, cheatPathHash,
+) {
+  if (xd === 0 && yd === 0) {
+    return;
+  }
+
+  const bx = a.x + xd;
+  const by = a.y + yd;
+  if (seen.has(bx + ',' + by)) {
+    return;
+  }
+  seen.add(bx + ',' + by);
+
+  const limit = 20;
+  const manhattanDistance = Math.abs(xd) + Math.abs(yd);
+  const cheatSteps = Object.keys(cheatPathHash).length + 1;
+
+  if (cheatSteps <= limit) {
+    const cph = { ...cheatPathHash, [h(a.x + xd, a.y + yd)]: true };
+    const b = pathHash[h(bx, by)];
+    if (b) {
+      const newPathLength =
+        a.steps + cheatSteps + (noCheatPathLength - b.steps);
+      const thisPath = [
+        ...path.slice(0, path.indexOf(a) + 1),
+        ...path.slice(path.indexOf(b))
+      ];
+
+
+      const saved = noCheatPathLength - newPathLength;
+      if (saved > 0) {
+        /*
+        print(
+          grid,
+          grid.length,
+          thisPath,
+          undefined,
+          undefined,
+          cph,
+        );
+        console.log({ b, xd, yd, manhattanDistance });
+        console.log('saves: ' + saved);
+        */
+        const c = h(cheatPos.x, cheatPos.y);
+        cheats[c] = Math.min(cheats[c] || Infinity, saved);
+      }
+    } else {
+      for (const dir of dirs) {
+        findCheatsFromPoint(
+          grid,
+          path,
+          noCheatPathLength,
+          cheats,
+          pathHash,
+          a,
+          cheatPos,
+          stepsToA,
+          xd + dir.x,
+          yd + dir.y,
+          seen,
+          cph,
+        );
+      }
+    }
+  }
+}
+
+function run(file)  {
+  const input = fs.readFileSync(file).toString('utf-8');
+  const grid = makeGrid(input);
+  const size = grid.length;
+  const nodes = nodesFromGrid(grid, size);
+  const { start, end } = startAndEndFromGrid(grid);
+
+  const path = solve(nodes, size, start, end);
+  // console.log(path);
+  if (!path) {
+    console.log('no exit, my guy');
+    process.exit(1);
+  }
+
+  const cheats = {};
+  const noCheatPathLength = path.length;
+  print(grid, size, path, start, end);
+
+  const pathHash = {};
+  path.forEach(node => {
+    pathHash[h(node.x, node.y)] = node;
+  });
+
+  path.unshift({ x: start.x, y: start.y, steps: 0 });
+
+  for (let i=0; i<path.length-1; i++) {
+    const a = path[i];
+    const hash = h(a.x, a.y);
+
+    for (const dir of dirs) {
+      if (g(grid, a.x + dir.x, a.y + dir.y) === "#") {
+        // console.log('Looking at ' + (a.x + dir.x) + ',' + (a.y + dir.y) +
+        // ' from ' + a.x + ',' + a.y);
+        const cheatPos = { x: a.x + dir.x, y: a.y + dir.y };
+        findCheatsFromPoint(
+          grid,
+          path,
+          noCheatPathLength,
+          cheats,
+          pathHash,
+          a,
+          cheatPos,
+          i + 1,
+          dir.x,
+          dir.y,
+          new Set(hash),
+          { [h(cheatPos.x, cheatPos.y)]: true },
+        );
+      }
+    }
+  }
+
+  report(cheats);
+}
+
 
 run('./test-input.txt');
-//run('./input.txt');
+// run('./input.txt');
